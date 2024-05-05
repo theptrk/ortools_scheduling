@@ -5,63 +5,85 @@ from ortools.sat.python import cp_model
 
 def main() -> None:
     # Data.
-    num_nurses = 20
-    num_shifts = 15
-    num_days = 28
-    all_nurses = range(num_nurses)
-    all_shifts = range(num_shifts)
-    all_days = range(num_days)
+
+    # Name, Certifications, Days Available
+    ALL_NURSES = [
+        ("Alice", set(["S1", "EVE-S1", "S2"]), set([0, 1, 4])),
+        ("Bobby", set(["S1", "EVE-S1", "S2"]), set([1, 2, 3])),
+        ("Cindy", set(["S1", "EVE-S1"]), set([0, 1, 2, 3, 4])),
+    ]
+
+    ALL_SHIFT_TYPES = ["S1", "EVE-S1", "S2"]
+
+    ALL_DAYS = [0, 1, 2, 3, 4]
+
+    shift_coverage_days = {
+        "S1": set([0, 1, 3, 4]),
+        "EVE-S1": set([1, 2, 3]),
+        "S2": set([0, 2, 4]),
+    }
+
+    num_days = len(ALL_DAYS)
 
     # Creates the model.
     model = cp_model.CpModel()
 
+    def valid_n_d_s(nurse_certs, nurse_av, d, shift_name):
+        is_shift_needs_coverage = d in shift_coverage_days[shift_name]
+        if not is_shift_needs_coverage:
+            return False
+
+        is_emp_cert_for_shift = shift_name in nurse_certs
+        if not is_emp_cert_for_shift:
+            return False
+
+        is_nurse_av = d in nurse_av
+        if not is_nurse_av:
+            return False
+
+        return True
+
     # Creates shift variables.
-    # shifts[(n, d, s)]: nurse 'n' works shift 's' on day 'd'.
     shifts = {}
-    for n in all_nurses:
-        for d in all_days:
-            for s in all_shifts:
-                # print(f"creating shift var: n={n} d={d} s={s}")
-                shifts[(n, d, s)] = model.new_bool_var(f"shift_n{n}_d{d}_s{s}")
+    for nurse_name, nurse_certs, nurse_av in ALL_NURSES:
+        for d in ALL_DAYS:
+            for shift_name in ALL_SHIFT_TYPES:
+                if not valid_n_d_s(nurse_certs, nurse_av, d, shift_name):
+                    continue
+
+                shifts[(nurse_name, d, shift_name)] = model.new_bool_var(
+                    f"shift_n{nurse_name}_d{d}_s{shift_name}"
+                )
 
     # Each shift is assigned to exactly one nurse in the schedule period.
-    for d in all_days:
-        for s in all_shifts:
-            exactly_one_nurse = [shifts[(n, d, s)] for n in all_nurses]
+    for d in ALL_DAYS:
+        for shift_name in ALL_SHIFT_TYPES:
+            exactly_one_nurse = [
+                shifts[(nurse_name, d, shift_name)]
+                for nurse_name, nurse_certs, nurse_av in ALL_NURSES
+                if valid_n_d_s(nurse_certs, nurse_av, d, shift_name)
+            ]
             # examples: note shifts are the same in each list
-            # [shift_n0_d0_s0, shift_n1_d0_s0, shift_n2_d0_s0]
-            # [shift_n0_d0_s1, shift_n1_d0_s1, shift_n2_d0_s1]
-            model.add_exactly_one(exactly_one_nurse)
+            # [shift_nAlice_d0_sS1(0..1), shift_nBobby_d0_sS1(0..1), shift_nCindy_d0_sS1(0..1)]
+            # [shift_nAlice_d0_sEVE-S1(0..1), shift_nBobby_d0_sEVE-S1(0..1), shift_nCindy_d0_sEVE-S1(0..1)]
+            # [shift_nAlice_d0_sS2(0..1), shift_nBobby_d0_sS2(0..1)]
+            if len(exactly_one_nurse) > 0:
+                model.add_exactly_one(exactly_one_nurse)
 
     # Each nurse works at most one shift per day.
-    for n in all_nurses:
-        for d in all_days:
+    for nurse_name, nurse_certs, nurse_av in ALL_NURSES:
+        for d in ALL_DAYS:
             # examples: note days are the same in each list
-            # [shift_n0_d0_s0, shift_n0_d0_s1, shift_n0_d0_s2, shift_n0_d0_s3, shift_n0_d0_s4(0..1)]
-            # [shift_n0_d1_s0, shift_n0_d1_s1, shift_n0_d1_s2, shift_n0_d1_s3, shift_n0_d1_s4(0..1)]
-            # [shift_n0_d2_s0, shift_n0_d2_s1, shift_n0_d2_s2, shift_n0_d2_s3, shift_n0_d2_s4(0..1)]
-            one_shift_per_day = [shifts[(n, d, s)] for s in all_shifts]
-            model.add_at_most_one(one_shift_per_day)
-
-    # Try to distribute the shifts evenly, so that each nurse works
-    # min_shifts_per_nurse shifts. If this is not possible, because the total
-    # number of shifts is not divisible by the number of nurses, some nurses will
-    # be assigned one more shift.
-    min_shifts_per_nurse = (num_shifts * num_days) // num_nurses
-    if num_shifts * num_days % num_nurses == 0:
-        max_shifts_per_nurse = min_shifts_per_nurse
-    else:
-        max_shifts_per_nurse = min_shifts_per_nurse + 1
-    for n in all_nurses:
-        # [bool]
-        shifts_worked = []
-        for d in all_days:
-            for s in all_shifts:
-                shifts_worked.append(shifts[(n, d, s)])
-
-        # since shifts_worked: [bool], sum will sum the 1's
-        model.add(min_shifts_per_nurse <= sum(shifts_worked))
-        model.add(sum(shifts_worked) <= max_shifts_per_nurse)
+            # [shift_nAlice_d0_sS1(0..1), shift_nAlice_d0_sEVE-S1(0..1), shift_nAlice_d0_sS2(0..1)]
+            # [shift_nAlice_d1_sS1(0..1), shift_nAlice_d1_sEVE-S1(0..1), shift_nAlice_d1_sS2(0..1)]
+            # [shift_nAlice_d2_sS1(0..1), shift_nAlice_d2_sEVE-S1(0..1), shift_nAlice_d2_sS2(0..1)]
+            one_shift_per_day = [
+                shifts[(nurse_name, d, shift_name)]
+                for shift_name in ALL_SHIFT_TYPES
+                if valid_n_d_s(nurse_certs, nurse_av, d, shift_name)
+            ]
+            if len(one_shift_per_day) > 0:
+                model.add_at_most_one(one_shift_per_day)
 
     # Creates the solver and solve.
     solver = cp_model.CpSolver()
@@ -72,12 +94,12 @@ def main() -> None:
     class NursesPartialSolutionPrinter(cp_model.CpSolverSolutionCallback):
         """Print intermediate solutions."""
 
-        def __init__(self, shifts, num_nurses, num_days, num_shifts, limit):
+        def __init__(self, shifts, all_nurses, num_days, all_shift_types, limit):
             cp_model.CpSolverSolutionCallback.__init__(self)
             self._shifts = shifts
-            self._num_nurses = num_nurses
+            self._all_nurses = all_nurses
             self._num_days = num_days
-            self._num_shifts = num_shifts
+            self._all_shift_types = all_shift_types
             self._solution_count = 0
             self._solution_limit = limit
 
@@ -86,14 +108,18 @@ def main() -> None:
             print(f"Solution {self._solution_count}")
             for d in range(self._num_days):
                 print(f"Day {d}")
-                for n in range(self._num_nurses):
+                for nurse_name, nurse_certs, nurse_av in self._all_nurses:
                     is_working = False
-                    for s in range(self._num_shifts):
-                        if self.value(self._shifts[(n, d, s)]):
-                            is_working = True
-                            print(f"  Nurse {n} works shift {s}")
+                    for shift_name in self._all_shift_types:
+                        if valid_n_d_s(nurse_certs, nurse_av, d, shift_name):
+                            if self.value(self._shifts[(nurse_name, d, shift_name)]):
+                                is_working = True
+                                print(f"  Nurse {nurse_name} works shift {shift_name}")
                     if not is_working:
-                        print(f"  Nurse {n} does not work")
+                        if valid_n_d_s(nurse_certs, nurse_av, d, shift_name):
+                            print(f"  Nurse {nurse_name} does not work")
+                        else:
+                            print(f"  Nurse {nurse_name} not available")
             if self._solution_count >= self._solution_limit:
                 print(f"Stop search after {self._solution_limit} solutions")
                 self.stop_search()
@@ -104,7 +130,7 @@ def main() -> None:
     # Display the first five solutions.
     solution_limit = 5
     solution_printer = NursesPartialSolutionPrinter(
-        shifts, num_nurses, num_days, num_shifts, solution_limit
+        shifts, ALL_NURSES, num_days, ALL_SHIFT_TYPES, solution_limit
     )
 
     solver.solve(model, solution_printer)
