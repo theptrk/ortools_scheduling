@@ -85,6 +85,31 @@ def main() -> None:
             if len(one_shift_per_day) > 0:
                 model.add_at_most_one(one_shift_per_day)
 
+    # Adding constraint: Evening shifts cannot be followed by day shifts on the next day.
+    for nurse_name, nurse_certs, nurse_av in ALL_NURSES:
+        for d in range(len(ALL_DAYS) - 1):  # Check for each day except the last day
+            for today_shift_name in ALL_SHIFT_TYPES:
+                # # the shift could not be assigned so exit
+                # if not valid_n_d_s(nurse_certs, nurse_av, d, today_shift_name):
+                #     continue
+
+                # the shift is not assigned so exit
+                if not shifts[(nurse_name, d, today_shift_name)]:
+                    continue
+
+                # the shift is not evening so exit
+                if not today_shift_name.startswith("EVE-"):
+                    continue
+
+                # at this point shift is an evening shift
+                tomorrow_shift_name = None
+                for shift_name in ALL_SHIFT_TYPES:
+                    if shifts[(nurse_name, d + 1, shift_name)]:
+                        tomorrow_shift_name = shift_name
+
+                # check if today shift is evening and tomorrows shift is evening
+                model.add([today_shift_name and tomorrow_shift_name])
+
     # Creates the solver and solve.
     solver = cp_model.CpSolver()
     solver.parameters.linearization_level = 0
