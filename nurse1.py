@@ -15,6 +15,11 @@ def main() -> None:
     # Define all shift types in a given day
     all_shift_types = ["GEN", "ICU", "EVE-GEN"]
 
+    # Code to identify evening shifts (unchanged)
+    is_evening_for_shift_types: list[bool] = [
+        st.startswith("EVE-") for st in all_shift_types
+    ]
+
     # Shift coverage requirement for each day and shift.
     # 1 means the shift needs to be covered by exactly one nurse, 0 means no coverage needed.
     coverage_required = {
@@ -45,10 +50,19 @@ def main() -> None:
 
     # Predefined shifts where the key is a tuple (nurse, day, shift) and the value is True
     # if that nurse is required to work that shift on that day.
-    predefined_shifts = {
-        (0, 0, 2): True,  # Nurse 0 is scheduled to work shift 2 ("EVE-GEN") on day 0
-        (2, 2, 0): True,  # Nurse 2 is scheduled to work shift 0 ("GEN") on day 2
-    }
+    predefined_shifts = [
+        # Nurse 0, day 1 is scheduled to work shift 1 ("ICU")
+        (0, 1, 1),
+        # Nurse 1, day 2 is scheduled to work shift 2 ("EVE-GEN")
+        (1, 2, 2),
+    ]
+
+    evening_shift_allocation_data = [
+        (1, 2),  # Min 1, max 2 evening shifts for nurse 0
+        (3, 4),  # Min 3, max 4 evening shifts for nurse 1
+        (3, 4),  # Min 3, max 4 evening shifts for nurse 2
+        (2, 3),  # Min 2, max 3 evening shifts for nurse 3
+    ]
 
     # Creates the model.
     model = cp_model.CpModel()
@@ -69,6 +83,8 @@ def main() -> None:
         for s in all_shifts:
             if coverage_required[(d, s)] == 1:
                 # (n (varying), d, s) should be a single 1 in list
+                # https://or-tools.github.io/docs/pdoc/ortools/sat/python/cp_model.html#CpModel.add_exactly_one
+                # - Adds ExactlyOne(literals): sum(literals) == 1.
                 model.add_exactly_one(shifts[(n, d, s)] for n in all_nurses)
             else:
                 # (n (varying), d, s) should sum to 0
@@ -90,6 +106,14 @@ def main() -> None:
                     # If the shift type is not in the nurse's allowed list, forbid this assignment
                     model.add(shifts[(n, d, s)] == 0)
 
+    # Set predefined shifts
+    for n, d, s in predefined_shifts:
+        shift_type = all_shift_types[s]
+        assert shift_type in nurse_certifications[n]
+        # might need to change in future for "PROJ"
+        assert coverage_required[(d, s)]
+        model.add(shifts[(n, d, s)] == 1)
+
     # Constraint for preventing back-to-back evening then day shifts for any nurse
     for n in all_nurses:
         # Avoid the last day as it doesn't have a 'next day'
@@ -102,10 +126,36 @@ def main() -> None:
                         if not all_shift_types[s_next].startswith("EVE-")
                     ]
                     if tomorrows_day_shifts:
+                        # BONUS
+                        # Check if today is Sunday (d % 7 == 0) and tomorrow is Monday ((d + 1) % 7 == 1)
+                        # if (d % 7 == 0) and ((d + 1) % 7 == 1):
+                        #     # Allow evening to day transition from Sunday to Monday
+                        #     continue
+
                         # tomorrows_day_shifts_1_count = sum(tomorrows_day_shifts)
                         model.add(sum(tomorrows_day_shifts) == 0).only_enforce_if(
                             shifts[(n, d, s)]
                         )
+
+    # Add constraints to enforce minimum and maximum number of evening shifts
+    for n in all_nurses:
+        # assigned only should not exceed max
+        assigned_evening_shifts = []
+        # predefined + assigned should pass minimum
+        total_evening_shifts = []
+
+        for d in all_days:
+            for s in all_shifts:
+                if is_evening_for_shift_types[s]:
+                    shift_var = shifts[(n, d, s)]
+                    total_evening_shifts.append(shift_var)
+
+        # Min and max shifts including predefined
+        min_evening_shifts, max_evening_shifts = evening_shift_allocation_data[n]
+        model.add(sum(total_evening_shifts) >= min_evening_shifts)
+
+        if assigned_evening_shifts:
+            model.add(sum(assigned_evening_shifts) <= max_evening_shifts)
 
     # Try to distribute the shifts evenly, so that each nurse works
     # min_shifts_per_nurse shifts. If this is not possible, because the total
