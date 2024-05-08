@@ -1,5 +1,7 @@
 """Example of a simple nurse scheduling problem."""
 
+# https://developers.google.com/optimization/scheduling/employee_scheduling
+
 from ortools.sat.python import cp_model
 
 
@@ -85,6 +87,20 @@ def main() -> None:
             if len(one_shift_per_day) > 0:
                 model.add_at_most_one(one_shift_per_day)
 
+    #  day 1   day 2  day 3 day 4
+    # [is eve, is eve ------
+    #  day 2   day 3  day 4
+    # [------, is day, is day
+
+    # SUM 1        2      1
+    # THERE SHOULD BE NO 2
+
+    # list all the eve
+    # list all the day (offset by one day)
+    # sum both lists
+
+    # evening_list = [shifts for d in ALL_DAYS]
+
     # Adding constraint: Evening shifts cannot be followed by day shifts on the next day.
     for nurse_name, nurse_certs, nurse_av in ALL_NURSES:
         for d in range(len(ALL_DAYS) - 1):  # Check for each day except the last day
@@ -108,7 +124,7 @@ def main() -> None:
                         tomorrow_shift_name = shift_name
 
                 # check if today shift is evening and tomorrows shift is evening
-                model.add([today_shift_name and tomorrow_shift_name])
+                model.add(today_shift_name and tomorrow_shift_name)
 
     # Creates the solver and solve.
     solver = cp_model.CpSolver()
